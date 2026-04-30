@@ -1,13 +1,16 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
+from PIL import Image, ImageDraw, ImageFont
 
 sns.set_theme(style="whitegrid")
 
 DATASET_CANDIDATES = ["main_data.csv", "clean_sampah_metadata.csv"]
 DATE_KEYWORDS = ("date", "tanggal", "time", "waktu")
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 
 def find_dataset_path() -> Path | None:
@@ -30,6 +33,46 @@ def find_existing_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
     return None
 
 
+def find_dataset_image_root() -> Path | None:
+    local_candidates = [
+        Path("sampah-daur-ulang"),
+        Path("dataset"),
+        Path("data"),
+        Path.home() / ".cache" / "kagglehub" / "datasets" / "fathurrahmanalfarizy" / "sampah-daur-ulang" / "versions" / "5" / "DATASETS",
+    ]
+
+    for candidate in local_candidates:
+        if candidate.exists() and candidate.is_dir():
+            return candidate
+
+    kaggle_cache_root = Path.home() / ".cache" / "kagglehub" / "datasets"
+    if kaggle_cache_root.exists():
+        matches = sorted(
+            kaggle_cache_root.glob("**/sampah-daur-ulang/versions/*/DATASETS"),
+            reverse=True,
+        )
+        for match in matches:
+            if match.is_dir():
+                return match
+
+    return None
+
+
+def find_category_sample_image(category: str, image_root: Path | None) -> Path | None:
+    if image_root is None:
+        return None
+
+    class_dir = image_root / category
+    if not class_dir.exists() or not class_dir.is_dir():
+        return None
+
+    for image_path in sorted(class_dir.rglob("*")):
+        if image_path.is_file() and image_path.suffix.lower() in IMAGE_EXTENSIONS:
+            return image_path
+
+    return None
+
+
 def preprocess_data(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     data = df.copy()
 
@@ -46,6 +89,10 @@ def preprocess_data(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
         "height": "tinggi",
     }
     data = data.rename(columns={k: v for k, v in rename_map.items() if k in data.columns})
+
+    # Remove file path column for privacy / display reasons
+    if "lokasi_file" in data.columns:
+        data = data.drop(columns=["lokasi_file"])
 
     date_cols: list[str] = []
     for col in data.columns:
@@ -210,6 +257,28 @@ def build_insights(
     return insights
 
 
+def create_placeholder_image(label: str) -> Image.Image:
+    w, h = 640, 420
+    image = Image.new("RGB", (w, h), color=(240, 240, 240))
+    draw = ImageDraw.Draw(image)
+
+    try:
+        font = ImageFont.load_default()
+    except Exception:
+        font = None
+
+    bbox = draw.textbbox((0, 0), label, font=font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+    draw.text(
+        ((w - text_width) / 2, (h - text_height) / 2),
+        label,
+        fill=(30, 30, 30),
+        font=font,
+    )
+    return image
+
+
 def main() -> None:
     st.set_page_config(
         page_title="Dashboard Analisis Sampah Daur Ulang",
@@ -282,6 +351,23 @@ def main() -> None:
                 ax1.set_ylabel("Jumlah Data")
                 ax1.tick_params(axis="x", rotation=25)
                 st.pyplot(fig1)
+
+                if not class_dist.empty:
+                    top_row = class_dist.iloc[0]
+                    bottom_row = class_dist.iloc[-1]
+                    imbalance_ratio = top_row["jumlah_data"] / max(bottom_row["jumlah_data"], 1)
+                    below_15 = (
+                        class_dist["jumlah_data"] / class_dist["jumlah_data"].sum() * 100 < 15
+                    )
+                    low_classes = class_dist.loc[below_15, "kategori"].tolist()
+                    st.markdown(
+                        f"**Insight:** Kategori dengan data terbanyak adalah **{top_row['kategori']}** dan yang paling sedikit **{bottom_row['kategori']}** dengan rasio sekitar **{imbalance_ratio:.2f}x**. "
+                        + (
+                            f"Kategori di bawah 15% total data: {', '.join(map(str, low_classes))}."
+                            if low_classes
+                            else "Tidak ada kategori yang berada di bawah 15% total data."
+                        )
+                    )
             else:
                 st.info("Kolom kategori tidak ditemukan untuk membuat bar chart.")
 
@@ -321,6 +407,20 @@ def main() -> None:
 
             if line_chart_rendered:
                 st.pyplot(fig2)
+
+                if selected_date_col and not trend_df.empty:
+                    peak_row = trend_df.loc[trend_df["jumlah_data"].idxmax()]
+                    st.markdown(
+                        f"**Insight:** Aktivitas data paling padat terjadi pada **{peak_row[selected_date_col].date()}** dengan **{int(peak_row['jumlah_data'])}** data. "
+                        f"Pola ini membantu melihat apakah ada lonjakan pengumpulan data pada periode tertentu."
+                    )
+                elif category_col and size_col and not filtered_df.empty:
+                    highest_row = trend_alt.iloc[0]
+                    lowest_row = trend_alt.iloc[-1]
+                    st.markdown(
+                        f"**Insight:** Median ukuran file tertinggi ada pada **{highest_row[category_col]}** dan terendah pada **{lowest_row[category_col]}**. "
+                        "Ini menandakan karakteristik file antar kategori tidak seragam dan layak diperlakukan berbeda saat preprocessing."
+                    )
             else:
                 st.info("Line chart belum dapat ditampilkan karena kolom pendukung tidak tersedia.")
 
@@ -331,6 +431,19 @@ def main() -> None:
             sns.heatmap(corr_matrix, annot=True, fmt=".2f", cmap="YlGnBu", ax=ax3)
             ax3.set_title("Heatmap Korelasi Fitur Numerik")
             st.pyplot(fig3)
+
+            corr_no_diag = corr_matrix.abs().where(~pd.DataFrame(
+                np.eye(corr_matrix.shape[0], dtype=bool),
+                index=corr_matrix.index,
+                columns=corr_matrix.columns,
+            ))
+            if corr_no_diag.notna().any().any():
+                strongest_pair = corr_no_diag.stack().idxmax()
+                strongest_value = corr_matrix.loc[strongest_pair[0], strongest_pair[1]]
+                st.markdown(
+                    f"**Insight:** Korelasi paling kuat terlihat antara **{strongest_pair[0]}** dan **{strongest_pair[1]}** dengan nilai **{strongest_value:.2f}**. "
+                    "Pola ini penting untuk melihat fitur mana yang saling berkaitan dan berpotensi redundant."
+                )
         else:
             st.info("Heatmap korelasi membutuhkan minimal dua kolom numerik.")
 
@@ -338,6 +451,41 @@ def main() -> None:
         st.subheader("Insight")
         for insight in build_insights(filtered_df, category_col, size_col, pixel_col):
             st.markdown(f"- {insight}")
+
+    with st.container():
+        st.subheader("Contoh Gambar per Kategori")
+        if category_col and not filtered_df.empty:
+            image_root = find_dataset_image_root()
+            categories = sorted(filtered_df[category_col].dropna().astype(str).unique())
+            if not categories:
+                st.info("Tidak ada kategori untuk ditampilkan gambar.")
+            elif image_root is None:
+                st.warning("Folder dataset gambar tidak ditemukan di cache lokal, jadi gambar contoh tidak bisa diambil dari dataset asli.")
+            else:
+                cols = st.columns(min(3, len(categories)))
+                real_image_count = 0
+                missing_categories: list[str] = []
+
+                for i, cat in enumerate(categories):
+                    img_path = find_category_sample_image(cat, image_root)
+                    col = cols[i % len(cols)]
+
+                    with col:
+                        if img_path is not None:
+                            st.image(Image.open(img_path), width="stretch", caption=str(cat))
+                            real_image_count += 1
+                        else:
+                            st.image(create_placeholder_image(str(cat)), width="stretch", caption=str(cat))
+                            missing_categories.append(str(cat))
+
+                st.markdown(
+                    f"**Insight:** Ada **{real_image_count}** kategori yang berhasil diambil langsung dari file gambar dataset asli di cache lokal. "
+                    + (
+                        f"Kategori tanpa file contoh yang cocok: {', '.join(missing_categories)}."
+                        if missing_categories
+                        else "Semua kategori yang sedang difilter sudah punya contoh gambar asli dari dataset."
+                    )
+                )
 
     with st.container():
         st.subheader("Kesimpulan")
