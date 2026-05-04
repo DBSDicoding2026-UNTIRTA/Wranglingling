@@ -13,6 +13,10 @@ DATE_KEYWORDS = ("date", "tanggal", "time", "waktu")
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 
+def slugify_category(value: str) -> str:
+    return "".join(char if char.isalnum() else "_" for char in value.lower()).strip("_")
+
+
 def find_dataset_path() -> Path | None:
     for filename in DATASET_CANDIDATES:
         candidate = Path(filename)
@@ -35,6 +39,7 @@ def find_existing_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
 
 def find_dataset_image_root() -> Path | None:
     local_candidates = [
+        Path("clean_images"),
         Path("sampah-daur-ulang"),
         Path("dataset"),
         Path("data"),
@@ -62,13 +67,18 @@ def find_category_sample_image(category: str, image_root: Path | None) -> Path |
     if image_root is None:
         return None
 
-    class_dir = image_root / category
-    if not class_dir.exists() or not class_dir.is_dir():
-        return None
+    candidate_dirs = [image_root / category]
+    slug = slugify_category(category)
+    if slug and slug != category:
+        candidate_dirs.append(image_root / slug)
 
-    for image_path in sorted(class_dir.rglob("*")):
-        if image_path.is_file() and image_path.suffix.lower() in IMAGE_EXTENSIONS:
-            return image_path
+    for class_dir in candidate_dirs:
+        if not class_dir.exists() or not class_dir.is_dir():
+            continue
+
+        for image_path in sorted(class_dir.rglob("*")):
+            if image_path.is_file() and image_path.suffix.lower() in IMAGE_EXTENSIONS:
+                return image_path
 
     return None
 
