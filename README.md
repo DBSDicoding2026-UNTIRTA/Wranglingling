@@ -1,21 +1,46 @@
 # Dashboard Analisis Sampah Daur Ulang
 
-Deskripsi singkat
-- Aplikasi Streamlit untuk menampilkan analisis metadata gambar sampah daur ulang.
+Aplikasi ini berisi hasil proses data wrangling, exploratory data analysis, explanatory analysis, dan dashboard interaktif Streamlit untuk klasifikasi sampah daur ulang.
 
-Perubahan yang dilakukan
-- Kolom `file_path` dihapus dari data hasil wrangling untuk alasan privasi dan agar tidak ikut tersimpan di CSV akhir maupun tampil di dashboard.
-- Menambahkan bagian "Contoh Gambar per Kategori" di dashboard:
-  - Aplikasi akan mencari gambar di folder `images/` dengan nama file berformat `{slug_kategori}.png` (slug: huruf kecil, non-alfanumerik diganti underscore).
-  - Jika gambar tidak ditemukan, aplikasi membuat placeholder sederhana otomatis dan menyimpannya di `images/`.
+## Ringkasan Proyek
 
-Isi data akhir
-- File `clean_sampah_metadata.csv` hanya menyimpan metadata gambar yang dipakai untuk analisis, seperti kategori, nama file, ekstensi, dimensi, rasio aspek, jumlah piksel, ukuran file, dan mode warna.
-- Kolom jalur file mentah tidak disertakan lagi di snapshot wrangled terbaru.
+Proyek ini menggabungkan beberapa tahapan utama:
+- Gathering data dari dataset publik Kaggle.
+- Assessing data untuk mengecek kualitas, struktur, duplikasi, dan kelengkapan.
+- Cleaning data untuk menghasilkan metadata final yang siap dianalisis dan dipakai modeling.
+- EDA dan explanatory analysis untuk menjawab pertanyaan bisnis.
+- Visualisasi data dan dashboard interaktif menggunakan Streamlit.
+- Data dictionary sebagai referensi kolom dan tipe data.
 
-Menjalankan
-1. Pastikan Python 3.9+ terpasang.
-2. Instal dependensi:
+## Struktur Final Data
+
+Struktur data final yang dipakai saat ini:
+- Folder gambar final: [images](images)
+- Metadata final: [clean_sampah_metadata_updated.csv](clean_sampah_metadata_updated.csv)
+- Data dictionary: [DATA_DICTIONARY.md](DATA_DICTIONARY.md)
+- Dashboard Streamlit: [dashboard.py](dashboard.py)
+
+Folder [images](images) berisi subfolder kelas:
+- `Clothes`
+- `Kaca`
+- `Kardus`
+- `Kertas`
+- `Logam`
+- `Organik`
+- `Plastik`
+- `Residu`
+
+## Hasil Utama
+
+- Distribusi data antar kelas sudah dianalisis untuk melihat imbalance.
+- Dataset final sudah memuat kelas tambahan `Clothes` dan `Organik`.
+- Dashboard menampilkan ringkasan statistik, distribusi kelas, korelasi numerik, insight, dan contoh gambar per kelas.
+- Data final sudah disiapkan agar lebih siap diproses oleh model.
+
+## Menjalankan Dashboard
+
+1. Pastikan Python 3.9+ tersedia.
+2. Install dependency:
 
 ```bash
 pip install -r requirements.txt
@@ -27,9 +52,20 @@ pip install -r requirements.txt
 streamlit run dashboard.py
 ```
 
-Menambahkan gambar kategori sampah
-- Buat folder `images` di direktori proyek (opsional; aplikasi akan membuatnya otomatis jika belum ada).
-- Simpan satu gambar untuk setiap kategori dengan nama file mengikuti slug kategori, misal `plastik_botol.png`, `kertas.png`, dll.
-- Format yang didukung: PNG/JPG. Jika ada gambar, aplikasi akan menampilkannya sebagai contoh untuk tiap kategori.
+## Notebook Analisis
 
+Notebook utama ada di [Analisis Data Tahap 1.ipynb](Analisis%20Data%20Tahap%201.ipynb).
+Di notebook tersebut terdapat:
+- proses gathering data,
+- assessment data,
+- cleaning data,
+- EDA,
+- visualisasi,
+- explanatory analysis,
+- ringkasan kesiapan data untuk modeling.
 
+## Catatan
+
+- File metadata lama yang tidak dipakai lagi sudah dihapus.
+- Folder sementara seperti `clean_images/`, `clean_images_new/`, `clean_images_filtered/`, dan `clean_images_merged/` tidak dipakai lagi dalam workflow final.
+- Jika ingin memperbarui notebook atau data final, gunakan `clean_sampah_metadata_updated.csv` dan folder [images](images) sebagai sumber utama.

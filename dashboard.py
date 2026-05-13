@@ -8,9 +8,15 @@ from PIL import Image, ImageDraw, ImageFont
 
 sns.set_theme(style="whitegrid")
 
-DATASET_CANDIDATES = ["main_data.csv", "clean_sampah_metadata.csv"]
+DATASET_CANDIDATES = [
+    "clean_sampah_metadata_updated.csv",
+]
 DATE_KEYWORDS = ("date", "tanggal", "time", "waktu")
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+
+
+def slugify_category(value: str) -> str:
+    return "".join(char if char.isalnum() else "_" for char in value.lower()).strip("_")
 
 
 def find_dataset_path() -> Path | None:
@@ -33,44 +39,48 @@ def find_existing_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
     return None
 
 
-def find_dataset_image_root() -> Path | None:
-    local_candidates = [
-        Path("sampah-daur-ulang"),
-        Path("dataset"),
-        Path("data"),
-        Path.home() / ".cache" / "kagglehub" / "datasets" / "fathurrahmanalfarizy" / "sampah-daur-ulang" / "versions" / "5" / "DATASETS",
-    ]
+def find_dataset_image_roots() -> list[Path]:
+    image_root = Path("images")
+    return [image_root] if image_root.exists() and image_root.is_dir() else []
 
-    for candidate in local_candidates:
-        if candidate.exists() and candidate.is_dir():
-            return candidate
 
-    kaggle_cache_root = Path.home() / ".cache" / "kagglehub" / "datasets"
-    if kaggle_cache_root.exists():
-        matches = sorted(
-            kaggle_cache_root.glob("**/sampah-daur-ulang/versions/*/DATASETS"),
-            reverse=True,
-        )
-        for match in matches:
-            if match.is_dir():
-                return match
+def find_category_sample_image(category: str, image_roots: list[Path]) -> Path | None:
+    if not image_roots:
+        return None
+
+    slug = slugify_category(category)
+    for image_root in image_roots:
+        candidate_dirs = [image_root / category]
+        if slug and slug != category:
+            candidate_dirs.append(image_root / slug)
+
+        for class_dir in candidate_dirs:
+            if not class_dir.exists() or not class_dir.is_dir():
+                continue
+
+            for image_path in sorted(class_dir.rglob("*")):
+                if image_path.is_file() and image_path.suffix.lower() in IMAGE_EXTENSIONS:
+                    return image_path
 
     return None
 
 
-def find_category_sample_image(category: str, image_root: Path | None) -> Path | None:
-    if image_root is None:
-        return None
+def prioritize_categories(categories: list[str]) -> list[str]:
+    preferred = ["Clothes", "Organik"]
+    ordered = []
+    seen = set()
 
-    class_dir = image_root / category
-    if not class_dir.exists() or not class_dir.is_dir():
-        return None
+    for item in preferred:
+        if item in categories and item not in seen:
+            ordered.append(item)
+            seen.add(item)
 
-    for image_path in sorted(class_dir.rglob("*")):
-        if image_path.is_file() and image_path.suffix.lower() in IMAGE_EXTENSIONS:
-            return image_path
+    for item in categories:
+        if item not in seen:
+            ordered.append(item)
+            seen.add(item)
 
-    return None
+    return ordered
 
 
 def preprocess_data(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
@@ -118,6 +128,31 @@ def preprocess_data(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
                 data[col] = data[col].fillna(fallback)
 
     return data, date_cols
+
+
+def count_images_in_roots(image_roots: list[Path]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for root in image_roots:
+        total = 0
+        for ext in IMAGE_EXTENSIONS:
+            total += len(list(root.rglob(f"*{ext}")))
+        counts[str(root)] = total
+    return counts
+
+
+def compute_iqr_outlier_rate(series: pd.Series) -> float:
+    if series.empty:
+        return 0.0
+
+    q1 = series.quantile(0.25)
+    q3 = series.quantile(0.75)
+    iqr = q3 - q1
+    if iqr == 0:
+        return 0.0
+
+    lower = q1 - 1.5 * iqr
+    upper = q3 + 1.5 * iqr
+    return float(((series < lower) | (series > upper)).mean() * 100)
 
 
 def sidebar_filters(
@@ -294,7 +329,7 @@ def main() -> None:
     dataset_path = find_dataset_path()
     if dataset_path is None:
         st.error(
-            "File dataset tidak ditemukan. Letakkan main_data.csv atau clean_sampah_metadata.csv di folder proyek."
+            "File dataset tidak ditemukan. Letakkan clean_sampah_metadata_updated.csv di folder proyek."
         )
         st.stop()
 
@@ -308,6 +343,15 @@ def main() -> None:
     st.caption(f"Sumber data aktif: {dataset_path.name}")
 
     filtered_df, selected_date_col = sidebar_filters(clean_df, category_col, date_cols)
+
+    # discover available image roots and prefer the final `images` folder
+    available_image_roots = find_dataset_image_roots()
+    image_counts = count_images_in_roots(available_image_roots) if available_image_roots else {}
+    preferred_root = None
+    for p in available_image_roots:
+        if p.name == "images":
+            preferred_root = p
+            break
 
     with st.container():
         st.subheader("Data")
@@ -323,6 +367,13 @@ def main() -> None:
                 st.metric("Jumlah kategori", filtered_df[category_col].nunique())
             if size_col and not filtered_df.empty:
                 st.metric("Median ukuran file (KB)", f"{filtered_df[size_col].median():.2f}")
+            # show image counts (prefer images)
+            if preferred_root is not None:
+                cnt = image_counts.get(str(preferred_root), 0)
+                st.metric("Jumlah gambar (images)", f"{cnt:,}")
+            elif image_counts:
+                total_imgs = sum(image_counts.values())
+                st.metric("Jumlah gambar (semua sumber)", f"{total_imgs:,}")
 
     with st.container():
         st.subheader("Ringkasan Statistik")
@@ -344,22 +395,25 @@ def main() -> None:
                     .rename_axis("kategori")
                     .reset_index(name="jumlah_data")
                 )
+                class_dist["persen"] = class_dist["jumlah_data"] / class_dist["jumlah_data"].sum() * 100
                 fig1, ax1 = plt.subplots(figsize=(8, 4.5))
                 sns.barplot(data=class_dist, x="kategori", y="jumlah_data", palette="viridis", ax=ax1)
                 ax1.set_title("Distribusi Jumlah Data per Kategori")
                 ax1.set_xlabel("Kategori")
                 ax1.set_ylabel("Jumlah Data")
                 ax1.tick_params(axis="x", rotation=25)
+                # annotate percent on bars
+                for p, pct in zip(ax1.patches, class_dist["persen"]):
+                    height = p.get_height()
+                    ax1.annotate(f"{pct:.1f}%", (p.get_x() + p.get_width() / 2, height),
+                                 ha="center", va="bottom", fontsize=9)
                 st.pyplot(fig1)
 
                 if not class_dist.empty:
                     top_row = class_dist.iloc[0]
                     bottom_row = class_dist.iloc[-1]
                     imbalance_ratio = top_row["jumlah_data"] / max(bottom_row["jumlah_data"], 1)
-                    below_15 = (
-                        class_dist["jumlah_data"] / class_dist["jumlah_data"].sum() * 100 < 15
-                    )
-                    low_classes = class_dist.loc[below_15, "kategori"].tolist()
+                    low_classes = class_dist.loc[class_dist["persen"] < 15, "kategori"].tolist()
                     st.markdown(
                         f"**Insight:** Kategori dengan data terbanyak adalah **{top_row['kategori']}** dan yang paling sedikit **{bottom_row['kategori']}** dengan rasio sekitar **{imbalance_ratio:.2f}x**. "
                         + (
@@ -448,6 +502,139 @@ def main() -> None:
             st.info("Heatmap korelasi membutuhkan minimal dua kolom numerik.")
 
     with st.container():
+        st.subheader("Distribusi Ukuran File")
+        size_col1, size_col2 = st.columns(2)
+
+        with size_col1:
+            if size_col and not filtered_df.empty:
+                fig_size_hist, ax_size_hist = plt.subplots(figsize=(8, 4.5))
+                sns.histplot(filtered_df[size_col], bins=40, kde=True, color="#1b4965", ax=ax_size_hist)
+                ax_size_hist.set_title("Histogram Ukuran File (KB)")
+                ax_size_hist.set_xlabel("Ukuran File (KB)")
+                ax_size_hist.set_ylabel("Jumlah Gambar")
+                st.pyplot(fig_size_hist)
+
+                skewness = float(filtered_df[size_col].skew())
+                tail_note = "condong ke kanan" if skewness > 0.5 else "cukup seimbang"
+                st.markdown(
+                    f"**Insight:** Distribusi ukuran file {tail_note} (skewness {skewness:.2f}). "
+                    "Ini membantu menentukan apakah perlu normalisasi atau kompresi tambahan."
+                )
+            else:
+                st.info("Kolom ukuran file belum tersedia untuk histogram.")
+
+        with size_col2:
+            if category_col and size_col and not filtered_df.empty:
+                fig_size_box, ax_size_box = plt.subplots(figsize=(8, 4.5))
+                sns.boxplot(
+                    data=filtered_df,
+                    x=category_col,
+                    y=size_col,
+                    palette="Set2",
+                    ax=ax_size_box,
+                )
+                ax_size_box.set_title("Boxplot Ukuran File per Kategori")
+                ax_size_box.set_xlabel("Kategori")
+                ax_size_box.set_ylabel("Ukuran File (KB)")
+                ax_size_box.tick_params(axis="x", rotation=25)
+                st.pyplot(fig_size_box)
+
+                medians = filtered_df.groupby(category_col)[size_col].median().sort_values(ascending=False)
+                if not medians.empty:
+                    st.markdown(
+                        f"**Insight:** Median ukuran file tertinggi berada pada **{medians.index[0]}** "
+                        f"dan terendah pada **{medians.index[-1]}**, menandakan perbedaan karakteristik visual antar kategori."
+                    )
+            else:
+                st.info("Boxplot ukuran file membutuhkan kolom kategori dan ukuran file.")
+
+    with st.container():
+        st.subheader("Deviasi dan Outlier Ukuran File")
+        dev_col1, dev_col2 = st.columns(2)
+
+        with dev_col1:
+            if category_col and size_col and not filtered_df.empty:
+                overall_median = filtered_df[size_col].median()
+                median_by_class = filtered_df.groupby(category_col)[size_col].median()
+                deviation_pct = ((median_by_class - overall_median).abs() / overall_median * 100).sort_values(ascending=False)
+
+                dev_df = deviation_pct.reset_index()
+                dev_df.columns = ["kategori", "deviasi_persen"]
+
+                fig_dev, ax_dev = plt.subplots(figsize=(8, 4.5))
+                sns.barplot(data=dev_df, x="kategori", y="deviasi_persen", palette="crest", ax=ax_dev)
+                ax_dev.set_title("Deviasi Median Ukuran File per Kategori")
+                ax_dev.set_xlabel("Kategori")
+                ax_dev.set_ylabel("Deviasi (%)")
+                ax_dev.tick_params(axis="x", rotation=25)
+                st.pyplot(fig_dev)
+
+                top_dev = dev_df.head(2)["kategori"].tolist()
+                if top_dev:
+                    st.markdown(
+                        f"**Insight:** Deviasi median terbesar berasal dari kategori {', '.join(top_dev)}. "
+                        "Kategori ini perlu perhatian khusus saat standarisasi ukuran input."
+                    )
+            else:
+                st.info("Deviasi median membutuhkan kolom kategori dan ukuran file.")
+
+        with dev_col2:
+            if category_col and size_col and not filtered_df.empty:
+                outlier_rates = (
+                    filtered_df.groupby(category_col)[size_col]
+                    .apply(compute_iqr_outlier_rate)
+                    .sort_values(ascending=False)
+                )
+                outlier_df = outlier_rates.reset_index()
+                outlier_df.columns = ["kategori", "outlier_rate"]
+
+                fig_outlier, ax_outlier = plt.subplots(figsize=(8, 4.5))
+                sns.barplot(data=outlier_df, x="kategori", y="outlier_rate", palette="flare", ax=ax_outlier)
+                ax_outlier.set_title("Outlier Rate Ukuran File (IQR)")
+                ax_outlier.set_xlabel("Kategori")
+                ax_outlier.set_ylabel("Outlier Rate (%)")
+                ax_outlier.tick_params(axis="x", rotation=25)
+                st.pyplot(fig_outlier)
+
+                high_outliers = outlier_df[outlier_df["outlier_rate"] >= 5]["kategori"].tolist()
+                if high_outliers:
+                    st.markdown(
+                        "**Insight:** Outlier ukuran file >=5% muncul pada kategori: "
+                        + ", ".join(high_outliers)
+                        + ". Ini menandakan perlunya QC tambahan atau trimming." 
+                    )
+                else:
+                    st.markdown("**Insight:** Tidak ada kategori dengan outlier rate di atas 5%.")
+            else:
+                st.info("Outlier rate membutuhkan kolom kategori dan ukuran file.")
+
+    with st.container():
+        st.subheader("Distribusi Jumlah Piksel")
+        if category_col and pixel_col and not filtered_df.empty:
+            fig_px, ax_px = plt.subplots(figsize=(10, 5))
+            sns.violinplot(
+                data=filtered_df,
+                x=category_col,
+                y=pixel_col,
+                palette="muted",
+                ax=ax_px,
+            )
+            ax_px.set_title("Violin Plot Jumlah Piksel per Kategori")
+            ax_px.set_xlabel("Kategori")
+            ax_px.set_ylabel("Jumlah Piksel")
+            ax_px.tick_params(axis="x", rotation=25)
+            st.pyplot(fig_px)
+
+            pixel_medians = filtered_df.groupby(category_col)[pixel_col].median().sort_values(ascending=False)
+            if not pixel_medians.empty:
+                st.markdown(
+                    f"**Insight:** Median jumlah piksel tertinggi berada pada **{pixel_medians.index[0]}**, "
+                    "mengindikasikan resolusi rata-rata lebih besar pada kategori tersebut."
+                )
+        else:
+            st.info("Violin plot jumlah piksel membutuhkan kolom kategori dan jumlah piksel.")
+
+    with st.container():
         st.subheader("Insight")
         for insight in build_insights(filtered_df, category_col, size_col, pixel_col):
             st.markdown(f"- {insight}")
@@ -455,35 +642,66 @@ def main() -> None:
     with st.container():
         st.subheader("Contoh Gambar per Kategori")
         if category_col and not filtered_df.empty:
-            image_root = find_dataset_image_root()
-            categories = sorted(filtered_df[category_col].dropna().astype(str).unique())
+            image_roots = available_image_roots
+            categories = prioritize_categories(sorted(filtered_df[category_col].dropna().astype(str).unique()))
             if not categories:
                 st.info("Tidak ada kategori untuk ditampilkan gambar.")
-            elif image_root is None:
-                st.warning("Folder dataset gambar tidak ditemukan di cache lokal, jadi gambar contoh tidak bisa diambil dari dataset asli.")
+            elif not image_roots:
+                st.warning(
+                    "Folder dataset gambar tidak ditemukan. Pastikan folder final 'images' tersedia.\n"
+                    "Gunakan placeholder; pastikan folder gambar tersedia jika ingin melihat contoh asli."
+                )
+                cols = st.columns(min(8, len(categories)))
+                for i, cat in enumerate(categories):
+                    col = cols[i % len(cols)]
+                    with col:
+                        st.image(create_placeholder_image(str(cat)), width="stretch", caption=str(cat))
             else:
-                cols = st.columns(min(3, len(categories)))
+                # prefer explicit `images` when available
+                if preferred_root is not None:
+                    st.info(f"Menggunakan sumber gambar: {preferred_root}")
+                    search_roots = [preferred_root]
+                else:
+                    root_options = ["Gabungan (semua)"] + [str(p) for p in image_roots]
+                    default_idx = 0
+                    chosen = st.selectbox(
+                        "Pilih folder gambar (sumber)", options=root_options, index=default_idx
+                    )
+                    if chosen == "Gabungan (semua)":
+                        search_roots = image_roots
+                    else:
+                        from pathlib import Path as _P
+
+                        search_roots = [_P(chosen)]
+
+                cols = st.columns(min(8, len(categories)))
                 real_image_count = 0
                 missing_categories: list[str] = []
+                selected_preview_categories = [cat for cat in ["Clothes", "Organik"] if cat in categories]
+                selected_preview_categories += [cat for cat in categories if cat not in selected_preview_categories][: max(0, 8 - len(selected_preview_categories))]
 
-                for i, cat in enumerate(categories):
-                    img_path = find_category_sample_image(cat, image_root)
+                for i, cat in enumerate(selected_preview_categories):
+                    img_path = find_category_sample_image(cat, search_roots)
                     col = cols[i % len(cols)]
 
                     with col:
                         if img_path is not None:
-                            st.image(Image.open(img_path), width="stretch", caption=str(cat))
-                            real_image_count += 1
+                            try:
+                                st.image(Image.open(img_path), width="stretch", caption=str(cat))
+                                real_image_count += 1
+                            except Exception:
+                                st.image(create_placeholder_image(str(cat)), width="stretch", caption=str(cat))
+                                missing_categories.append(str(cat))
                         else:
                             st.image(create_placeholder_image(str(cat)), width="stretch", caption=str(cat))
                             missing_categories.append(str(cat))
 
                 st.markdown(
-                    f"**Insight:** Ada **{real_image_count}** kategori yang berhasil diambil langsung dari file gambar dataset asli di cache lokal. "
+                    f"**Insight:** Ada **{real_image_count}** kategori yang berhasil diambil langsung dari file gambar di sumber terpilih. "
                     + (
                         f"Kategori tanpa file contoh yang cocok: {', '.join(missing_categories)}."
                         if missing_categories
-                        else "Semua kategori yang sedang difilter sudah punya contoh gambar asli dari dataset."
+                        else "Semua kategori yang sedang difilter punya contoh gambar dari sumber terpilih."
                     )
                 )
 
