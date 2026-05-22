@@ -28,8 +28,9 @@ def find_dataset_path() -> Path | None:
 
 
 @st.cache_data(show_spinner=False)
-def load_dataset(path_str: str) -> pd.DataFrame:
-    return pd.read_csv(path_str)
+def load_and_preprocess_dataset(path_str: str) -> tuple[pd.DataFrame, list[str]]:
+    raw_df = pd.read_csv(path_str)
+    return preprocess_data(raw_df)
 
 
 def find_existing_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
@@ -130,21 +131,20 @@ def preprocess_data(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     return data, date_cols
 
 
-def count_images_in_roots(image_roots: list[Path]) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for root in image_roots:
-        total = 0
-        for ext in IMAGE_EXTENSIONS:
-            total += len(list(root.rglob(f"*{ext}")))
-        counts[str(root)] = total
-    return counts
-
-
+@st.cache_data(show_spinner=False)
 def count_images_in_root(image_root: Path) -> int:
-    total = 0
-    for ext in IMAGE_EXTENSIONS:
-        total += len(list(image_root.rglob(f"*{ext}")))
-    return total
+    return sum(
+        1
+        for image_path in image_root.rglob("*")
+        if image_path.is_file() and image_path.suffix.lower() in IMAGE_EXTENSIONS
+    )
+
+
+@st.cache_data(show_spinner=False)
+def find_category_sample_image_cached(category: str, image_root_paths: tuple[str, ...]) -> str | None:
+    image_roots = [Path(root) for root in image_root_paths]
+    sample = find_category_sample_image(category, image_roots)
+    return str(sample) if sample is not None else None
 
 
 def compute_iqr_outlier_rate(series: pd.Series) -> float:
@@ -340,8 +340,7 @@ def main() -> None:
         )
         st.stop()
 
-    raw_df = load_dataset(str(dataset_path))
-    clean_df, date_cols = preprocess_data(raw_df)
+    clean_df, date_cols = load_and_preprocess_dataset(str(dataset_path))
 
     category_col = find_existing_column(clean_df, ["kategori", "class_label", "category"])
     size_col = find_existing_column(clean_df, ["ukuran_file_kb", "file_size_kb"])
@@ -685,7 +684,8 @@ def main() -> None:
                 selected_preview_categories += [cat for cat in categories if cat not in selected_preview_categories][: max(0, 8 - len(selected_preview_categories))]
 
                 for i, cat in enumerate(selected_preview_categories):
-                    img_path = find_category_sample_image(cat, search_roots)
+                    img_path_str = find_category_sample_image_cached(cat, tuple(str(root) for root in search_roots))
+                    img_path = Path(img_path_str) if img_path_str else None
                     col = cols[i % len(cols)]
 
                     with col:
