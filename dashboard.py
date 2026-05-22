@@ -140,6 +140,13 @@ def count_images_in_roots(image_roots: list[Path]) -> dict[str, int]:
     return counts
 
 
+def count_images_in_root(image_root: Path) -> int:
+    total = 0
+    for ext in IMAGE_EXTENSIONS:
+        total += len(list(image_root.rglob(f"*{ext}")))
+    return total
+
+
 def compute_iqr_outlier_rate(series: pd.Series) -> float:
     if series.empty:
         return 0.0
@@ -344,14 +351,17 @@ def main() -> None:
 
     filtered_df, selected_date_col = sidebar_filters(clean_df, category_col, date_cols)
 
-    # discover available image roots and prefer the final `images` folder
-    available_image_roots = find_dataset_image_roots()
-    image_counts = count_images_in_roots(available_image_roots) if available_image_roots else {}
-    preferred_root = None
-    for p in available_image_roots:
-        if p.name == "images":
-            preferred_root = p
-            break
+    raw_images_root = Path("images")
+    curated_images_root = Path("clean_images_filtered")
+    raw_image_count = count_images_in_root(raw_images_root) if raw_images_root.exists() else 0
+    curated_image_count = count_images_in_root(curated_images_root) if curated_images_root.exists() else 0
+    available_image_roots = [
+        root for root in (raw_images_root, curated_images_root)
+        if root.exists() and root.is_dir()
+    ]
+    preferred_root = raw_images_root if raw_images_root.exists() and raw_images_root.is_dir() else None
+    if preferred_root is None and curated_images_root.exists() and curated_images_root.is_dir():
+        preferred_root = curated_images_root
 
     with st.container():
         st.subheader("Data")
@@ -362,18 +372,12 @@ def main() -> None:
 
         with col_right:
             st.markdown("### Ringkasan")
-            st.metric("Jumlah baris", f"{len(filtered_df):,}")
-            if category_col and not filtered_df.empty:
-                st.metric("Jumlah kategori", filtered_df[category_col].nunique())
-            if size_col and not filtered_df.empty:
-                st.metric("Median ukuran file (KB)", f"{filtered_df[size_col].median():.2f}")
-            # show image counts (prefer images)
-            if preferred_root is not None:
-                cnt = image_counts.get(str(preferred_root), 0)
-                st.metric("Jumlah gambar (images)", f"{cnt:,}")
-            elif image_counts:
-                total_imgs = sum(image_counts.values())
-                st.metric("Jumlah gambar (semua sumber)", f"{total_imgs:,}")
+            st.metric("Jumlah Data", f"{raw_image_count:,}")
+            st.metric("Jumlah Data Clean", f"{curated_image_count:,}")
+            if size_col and not clean_df.empty:
+                st.metric("Rata-rata ukuran file (KB)", f"{clean_df[size_col].mean():.2f}")
+            if category_col and not clean_df.empty:
+                st.metric("Jumlah kategori", clean_df[category_col].nunique())
 
     with st.container():
         st.subheader("Ringkasan Statistik")
