@@ -134,14 +134,20 @@ def preprocess_data(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     return data, date_cols
 
 
-def count_images_in_roots(image_roots: list[Path]) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for root in image_roots:
-        total = 0
-        for ext in IMAGE_EXTENSIONS:
-            total += len(list(root.rglob(f"*{ext}")))
-        counts[str(root)] = total
-    return counts
+@st.cache_data(show_spinner=False)
+def count_images_in_root(image_root: Path) -> int:
+    return sum(
+        1
+        for image_path in image_root.rglob("*")
+        if image_path.is_file() and image_path.suffix.lower() in IMAGE_EXTENSIONS
+    )
+
+
+@st.cache_data(show_spinner=False)
+def find_category_sample_image_cached(category: str, image_root_paths: tuple[str, ...]) -> str | None:
+    image_roots = [Path(root) for root in image_root_paths]
+    sample = find_category_sample_image(category, image_roots)
+    return str(sample) if sample is not None else None
 
 
 def compute_iqr_outlier_rate(series: pd.Series) -> float:
@@ -337,8 +343,7 @@ def main() -> None:
         )
         st.stop()
 
-    raw_df = load_dataset(str(dataset_path))
-    clean_df, date_cols = preprocess_data(raw_df)
+    clean_df, date_cols = load_and_preprocess_dataset(str(dataset_path))
 
     category_col = find_existing_column(clean_df, ["kategori", "class_label", "category"])
     size_col = find_existing_column(clean_df, ["ukuran_file_kb", "file_size_kb"])
@@ -348,14 +353,17 @@ def main() -> None:
 
     filtered_df, selected_date_col = sidebar_filters(clean_df, category_col, date_cols)
 
-    # discover available image roots and prefer the final `images` folder
-    available_image_roots = find_dataset_image_roots()
-    image_counts = count_images_in_roots(available_image_roots) if available_image_roots else {}
-    preferred_root = None
-    for p in available_image_roots:
-        if p.name == "images":
-            preferred_root = p
-            break
+    raw_images_root = Path("images")
+    curated_images_root = Path("clean_images_filtered")
+    raw_image_count = count_images_in_root(raw_images_root) if raw_images_root.exists() else 0
+    curated_image_count = count_images_in_root(curated_images_root) if curated_images_root.exists() else 0
+    available_image_roots = [
+        root for root in (raw_images_root, curated_images_root)
+        if root.exists() and root.is_dir()
+    ]
+    preferred_root = raw_images_root if raw_images_root.exists() and raw_images_root.is_dir() else None
+    if preferred_root is None and curated_images_root.exists() and curated_images_root.is_dir():
+        preferred_root = curated_images_root
 
     with st.container():
         st.subheader("Data")
@@ -366,18 +374,12 @@ def main() -> None:
 
         with col_right:
             st.markdown("### Ringkasan")
-            st.metric("Jumlah baris", f"{len(filtered_df):,}")
-            if category_col and not filtered_df.empty:
-                st.metric("Jumlah kategori", filtered_df[category_col].nunique())
-            if size_col and not filtered_df.empty:
-                st.metric("Median ukuran file (KB)", f"{filtered_df[size_col].median():.2f}")
-            # show image counts (prefer images)
-            if preferred_root is not None:
-                cnt = image_counts.get(str(preferred_root), 0)
-                st.metric("Jumlah gambar (images)", f"{cnt:,}")
-            elif image_counts:
-                total_imgs = sum(image_counts.values())
-                st.metric("Jumlah gambar (semua sumber)", f"{total_imgs:,}")
+            st.metric("Jumlah Data", f"{raw_image_count:,}")
+            st.metric("Jumlah Data Clean", f"{curated_image_count:,}")
+            if size_col and not clean_df.empty:
+                st.metric("Rata-rata ukuran file (KB)", f"{clean_df[size_col].mean():.2f}")
+            if category_col and not clean_df.empty:
+                st.metric("Jumlah kategori", clean_df[category_col].nunique())
 
     with st.container():
         st.subheader("Ringkasan Statistik")
@@ -685,7 +687,8 @@ def main() -> None:
                 selected_preview_categories += [cat for cat in categories if cat not in selected_preview_categories][: max(0, 8 - len(selected_preview_categories))]
 
                 for i, cat in enumerate(selected_preview_categories):
-                    img_path = find_category_sample_image(cat, search_roots)
+                    img_path_str = find_category_sample_image_cached(cat, tuple(str(root) for root in search_roots))
+                    img_path = Path(img_path_str) if img_path_str else None
                     col = cols[i % len(cols)]
 
                     with col:
