@@ -1,12 +1,17 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
-sns.set_theme(style="whitegrid")
+# Lazy load heavy libraries - only when needed
+def get_matplotlib_pyplot():
+    import matplotlib.pyplot as plt
+    return plt
+
+def get_seaborn():
+    import seaborn as sns
+    return sns
 
 DATASET_CANDIDATES = [
     "clean_sampah_metadata_updated.parquet",  # Faster & smaller (use if available)
