@@ -1,0 +1,37 @@
+# Data files (too large for deployment)
+*.csv
+*.parquet
+!requirements.txt
+
+# Image directories (use URL-based loading instead)
+images/
+clean_images_filtered/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+
+# Notebooks
+.ipynb_checkpoints/

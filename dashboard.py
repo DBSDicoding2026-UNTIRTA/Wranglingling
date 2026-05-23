@@ -9,6 +9,7 @@ from PIL import Image, ImageDraw, ImageFont
 sns.set_theme(style="whitegrid")
 
 DATASET_CANDIDATES = [
+    "clean_sampah_metadata_updated.parquet",  # Faster & smaller (use if available)
     "clean_sampah_metadata_updated.csv",
 ]
 DATE_KEYWORDS = ("date", "tanggal", "time", "waktu")
@@ -29,7 +30,10 @@ def find_dataset_path() -> Path | None:
 
 @st.cache_data(show_spinner=False)
 def load_dataset(path_str: str) -> pd.DataFrame:
-    return pd.read_csv(path_str)
+    if path_str.endswith('.parquet'):
+        return pd.read_parquet(path_str)
+    else:
+        return pd.read_csv(path_str)
 
 
 def find_existing_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
