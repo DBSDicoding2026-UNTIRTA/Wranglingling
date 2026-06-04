@@ -20,6 +20,35 @@ Struktur data final yang dipakai saat ini:
 - Data dictionary: [DATA_DICTIONARY.md](DATA_DICTIONARY.md)
 - Dashboard Streamlit: [dashboard.py](dashboard.py)
 
+## Akses Dataset
+
+Untuk keperluan pengumpulan dengan batas ukuran file maksimum, folder dataset gambar dapat tidak disertakan pada file ZIP pengumpulan.
+
+Dataset gambar lengkap tetap tersedia pada repository GitHub berikut:
+
+* Folder gambar final (`images`):
+  https://github.com/DBSDicoding2026-UNTIRTA/Wranglingling/tree/main/images
+
+* Folder hasil filtering (`clean_images_filtered`):
+  https://github.com/DBSDicoding2026-UNTIRTA/Wranglingling/tree/main/clean_images_filtered
+
+Apabila notebook atau dashboard memerlukan akses ke dataset gambar, silakan unduh folder tersebut dari repository GitHub dan letakkan pada struktur direktori yang sesuai.
+
+Struktur folder yang digunakan dalam proyek:
+
+images/
+├── Clothes/
+├── Kaca/
+├── Kardus/
+├── Kertas/
+├── Logam/
+├── Organik/
+├── Plastik/
+└── Residu/
+
+clean_images_filtered/
+└── (dataset hasil filtering yang digunakan pada tahap pembersihan data)
+
 Folder [images](images) berisi subfolder kelas:
 - `Clothes`
 - `Kaca`
@@ -64,8 +93,3 @@ Di notebook tersebut terdapat:
 - explanatory analysis,
 - ringkasan kesiapan data untuk modeling.
 
-## Catatan
-
-- File metadata lama yang tidak dipakai lagi sudah dihapus.
-- Folder sementara seperti `clean_images/`, `clean_images_new/`, `clean_images_filtered/`, dan `clean_images_merged/` tidak dipakai lagi dalam workflow final.
-- Jika ingin memperbarui notebook atau data final, gunakan `clean_sampah_metadata_updated.csv` dan folder [images](images) sebagai sumber utama.
